@@ -122,16 +122,16 @@ USER NEEDS: {user_context}
         
         # Simple, natural instructions based on what user needs
         if intent == IntentNode.NAVIGATE:
-            context += f"\nGuide them one step toward {destination}. Give ONE clear direction."
+            context += f"\nGuide them one step toward {destination}. Give ONE clear direction based on what you ACTUALLY SEE."
             
         elif intent == IntentNode.DESCRIBE_SURROUNDINGS:
-            context += "\nDescribe what's around them. Mention 2-3 key objects with positions."
+            context += "\nDescribe what's ACTUALLY in the scene. Only mention objects you can see. Be specific about positions (left, right, ahead, behind)."
             
         elif intent == IntentNode.SAFETY_CHECK:
-            context += "\nIs the path clear? Answer directly: safe or not safe, and why."
+            context += "\nBased on what you SEE, is the path clear? Answer directly: safe or not safe, and state specific obstacles if any."
             
         elif intent == IntentNode.WHAT_IS_AHEAD:
-            context += "\nWhat's directly ahead? Focus on forward view only."
+            context += "\nDescribe what you ACTUALLY SEE directly ahead. Don't guess or make assumptions."
             
         elif intent == IntentNode.EMERGENCY_STOP:
             context += "\nDANGER AHEAD. Say STOP and name the obstacle. Be firm but calm."

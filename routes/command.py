@@ -125,29 +125,55 @@ Return JSON only:
 async def interpret_voice_command(file: UploadFile = File(...)):
     """
     Convert voice audio to text, then classify intent and extract destination.
-    Accepts audio file (WAV, MP3, etc.)
+    Accepts audio file (WAV, MP3, WebM, etc.)
     """
-    # Step 1: Speech-to-Text
-    client = get_speech_client()
-    content = await file.read()
-    
-    audio = speech.RecognitionAudio(content=content)
-    config = speech.RecognitionConfig(
-        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-        language_code="en-US",
-        enable_automatic_punctuation=True,
-    )
-    
     try:
-        response = client.recognize(config=config, audio=audio)
+        # Step 1: Speech-to-Text
+        client = get_speech_client()
+        content = await file.read()
+        
+        audio = speech.RecognitionAudio(content=content)
+        
+        # Try WEBM_OPUS first (browser default)
+        config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
+            language_code="en-US",
+            enable_automatic_punctuation=True,
+        )
+        
+        try:
+            response = client.recognize(config=config, audio=audio)
+        except Exception as e:
+            print(f"WEBM_OPUS failed, trying OGG_OPUS: {e}")
+            # Fallback to OGG_OPUS
+            config = speech.RecognitionConfig(
+                encoding=speech.RecognitionConfig.AudioEncoding.OGG_OPUS,
+                language_code="en-US",
+                enable_automatic_punctuation=True,
+            )
+            response = client.recognize(config=config, audio=audio)
         
         if not response.results:
-            raise HTTPException(status_code=400, detail="No speech detected in audio")
+            print("No speech detected, using default")
+            return VoiceCommandResponse(
+                transcription="",
+                intent="DESCRIBE_SURROUNDINGS",
+                destination=None
+            )
         
         transcription = response.results[0].alternatives[0].transcript
+        print(f"Transcription: {transcription}")
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Speech-to-text failed: {str(e)}")
+        print(f"Speech-to-text error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        # Return safe default
+        return VoiceCommandResponse(
+            transcription="Error processing voice",
+            intent="DESCRIBE_SURROUNDINGS",
+            destination=None
+        )
     
     # Step 2: Interpret command using existing logic
     command_result = await interpret_command(CommandRequest(text=transcription))
