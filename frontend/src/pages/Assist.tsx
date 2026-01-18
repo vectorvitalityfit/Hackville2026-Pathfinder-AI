@@ -107,9 +107,27 @@ const Assist = () => {
 
   // Handle voice commands
   const handleVoiceCommand = async (phrase: string) => {
-    console.log("Voice command detected:", phrase);
+    if (!phrase || phrase.trim().length === 0) return;
+    console.log("Assist handleVoiceCommand triggered with:", phrase);
+
+    // Choose a natural transition phrase
+    const lowerPhrase = phrase.toLowerCase();
+    let transitionSpeech = "Checking...";
+
+    if (lowerPhrase.includes("ahead") || lowerPhrase.includes("front")) {
+      transitionSpeech = "Let me see what's in front of you.";
+    } else if (lowerPhrase.includes("around") || lowerPhrase.includes("surroundings") || lowerPhrase.includes("where")) {
+      transitionSpeech = "Okay, I'm looking at your surroundings now.";
+    } else if (lowerPhrase.includes("safe") || lowerPhrase.includes("can i")) {
+      transitionSpeech = "I'm checking if the path is safe.";
+    } else if (lowerPhrase.includes("navigate") || lowerPhrase.includes("go to") || lowerPhrase.includes("take me")) {
+      transitionSpeech = "Got it, I'm calculating the route.";
+    } else {
+      transitionSpeech = "Sure, let me check that for you.";
+    }
+
     showCaption(`Scanning: "${phrase}"...`);
-    speak("Processing...", "polite");
+    speak(transitionSpeech, "polite");
 
     if (!videoRef.current) {
       speak("Camera not active.", "assertive");
@@ -118,6 +136,23 @@ const Assist = () => {
 
     try {
       const result = await processTextCommand(phrase, videoRef.current);
+
+      // Special handling for STOP intent
+      if (result.intent === 'STOP') {
+        speak("Stopping all services.", "assertive");
+        showCaption("Service Stopped.");
+
+        // Stop navigation
+        navigationServiceRef.current?.stop();
+        navigationServiceRef.current = null;
+
+        // Stop camera and mic
+        if (isCameraActive) toggleCamera();
+        if (isMicActive) toggleMicrophone();
+
+        return;
+      }
+
       speak(result.text, "assertive");
       showCaption(result.text);
     } catch (error) {

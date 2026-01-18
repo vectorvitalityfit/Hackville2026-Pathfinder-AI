@@ -44,7 +44,7 @@ def get_gemini_model():
     try:
         credentials = service_account.Credentials.from_service_account_file(CREDENTIALS_PATH)
         vertexai.init(project=PROJECT_ID, location=REGION, credentials=credentials)
-        return GenerativeModel("gemini-2.0-flash-exp")
+        return GenerativeModel("gemini-2.5-flash")
     except Exception as e:
         print(f"Gemini initialization failed: {e}")
         return None
@@ -54,7 +54,6 @@ class ObjectDetection(BaseModel):
     confidence: float = Field(..., description="Confidence score")
     position: str = Field(..., description="Relative position")
     distance_meters: float = Field(2.0, description="Estimated distance in meters")
-    
 
 class VisionResponse(BaseModel):
     scene_description: Optional[str] = Field(None, description="Natural language scene description from Gemini")
@@ -118,10 +117,36 @@ async def analyze_frame(file: UploadFile = File(...)):
                 )
             )
         
+        # 2. Get Natural Language Description from Gemini (Primary)
+        scene_description = "A room with some objects."
+        print("DEBUG: Requesting Gemini scene description")
+        gemini_model = get_gemini_model()
+        if gemini_model:
+            try:
+                # Prompt Gemini for a concise scene description
+                prompt = "You are the VISION AGENT. Describe this indoor scene concisely in one sentence for a blind person, focusing on the path ahead."
+                image_part = Part.from_data(data=content, mime_type="image/jpeg")
+                print("DEBUG: Sending frame to Gemini Vision...")
+                gemini_resp = gemini_model.generate_content([prompt, image_part])
+                
+                if gemini_resp and gemini_resp.text:
+                    scene_description = gemini_resp.text.strip()
+                    print(f"DEBUG: Gemini Vision success: {scene_description}")
+                else:
+                    print("DEBUG: Gemini Vision returned empty text")
+                    scene_description = "Scene description empty."
+            except Exception as ge:
+                print(f"ERROR: Gemini scene description failed: {ge}")
+                import traceback
+                traceback.print_exc()
+                scene_description = "Scene analysis unavailable."
+        else:
+            print("ERROR: Gemini model not available for vision analysis")
+
         return VisionResponse(
-            scene_description=None,
+            scene_description=scene_description,
             objects=detected_objects,
-            method_used="vision_api"
+            method_used="vision_api_with_gemini"
         )
         
     except Exception as e:

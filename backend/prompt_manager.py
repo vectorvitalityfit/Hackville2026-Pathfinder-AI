@@ -127,15 +127,15 @@ USER NEEDS: {user_context}
             
         elif intent == IntentNode.DESCRIBE_SURROUNDINGS:
             context += """
-Tell them what's ahead and HOW TO NAVIGATE around it.
+Describe the overall scene and tell them what's ahead and HOW TO NAVIGATE around it. Use the visual details from the SITUATION.
 
 RULES:
-- Identify only objects that are NEAR (< 3 meters) and could be hit.
-- IGNORE distant objects entirely.
-- If there's an obstacle in the center and it's close: suggest moving to the clearer side.
-- Only say "Stop" if the path is completely blocked on all sides within 2 meters.
-- Prioritize actionable directions: "Move left", "Go right", "Continue straight".
-- Keep it under 10 words.
+- Identify meaningful objects and landmarks from the scene description.
+- IGNORE objects further than 3 meters unless they are major landmarks (like a door).
+- If there's an obstacle in the center: suggest moving to the clearer side.
+- Only say "Stop" if the path is completely blocked.
+- Prioritize natural, helpful descriptions: "You're in a hallway with chairs on the left. Path is clear ahead."
+- Keep it under 20 words.
 """
             
         elif intent == IntentNode.SAFETY_CHECK:
@@ -159,7 +159,7 @@ RULES:
         relevant_objects = center_obstacles + left_obstacles + right_obstacles
         
         if not relevant_objects:
-            return "Path appears clear within 3 meters"
+            return "CLEAR"  # More neutral, let the intent prompt decide wording
             
         if center_obstacles:
             names = [o['name'] for o in center_obstacles[:2]]
@@ -170,7 +170,7 @@ RULES:
         elif left_obstacles and right_obstacles:
             return "⚠️ NARROW: Objects on both sides"
         else:
-            return "✓ Path appears navigable with caution"
+            return "CAUTION: Path navigable with side obstacles"
     
     @staticmethod
     def apply_safety_filter(response_text: str, objects: List[Dict]) -> str:
@@ -185,14 +185,7 @@ RULES:
             lower_text = response_text.lower()
             if 'stop' not in lower_text and 'left' not in lower_text and 'right' not in lower_text:
                 obstacle_names = ', '.join([o['name'] for o in center_obstacles[:2]])
-                return f"Stop! {obstacle_names} ahead."
-        
-        # Remove any invented measurements
-        dangerous_words = ['meters', 'feet', 'yards', 'inches', 'centimeters']
-        for word in dangerous_words:
-            if word in response_text.lower():
-                # This is a safety violation - replace with safe generic
-                return "Move carefully. Let me guide you step by step."
+                return f"Stop. {obstacle_names} ahead."
         
         return response_text
     

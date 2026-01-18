@@ -33,7 +33,8 @@ def get_gemini_model():
     try:
         credentials = service_account.Credentials.from_service_account_file(CREDENTIALS_PATH)
         vertexai.init(project=PROJECT_ID, location=REGION, credentials=credentials)
-        return GenerativeModel("gemini-2.0-flash-exp")
+        # Upgraded to Pro for superior Command Agent performance
+        return GenerativeModel("gemini-2.5-pro")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to initialize Gemini: {str(e)}")
 
@@ -65,24 +66,31 @@ async def interpret_command(request: CommandRequest):
     Classify user intent and extract destination using Gemini.
     Returns intent and destination only. Does NOT perform navigation.
     """
+    print(f"DEBUG: Interpreting command: {request.text}")
     model = get_gemini_model()
     
-    prompt = f"""Classify user intent based on what they want.
+    prompt = f"""You are the COMMAND AGENT for a voice navigation assistant.
+Your sole job is to classify user intent from their speech and extract any mentioned destinations.
 
-Input: "{request.text}"
+USER SPEECH: "{request.text}"
 
-Intent categories:
-- WHAT_IS_AHEAD: asking about what's in front, ahead, or forward ("what's ahead", "what's in front")
-- DESCRIBE_SURROUNDINGS: asking about environment, where they are, what's around ("where am I", "what's around me", "describe surroundings")
-- SAFETY_CHECK: asking if it's safe, checking for obstacles ("is it safe", "can I walk", "check for obstacles")
-- NAVIGATE_TO_DESTINATION: wants to go somewhere ("take me to", "guide me to", "go to")
+INTENT CATEGORIES:
+- WHAT_IS_AHEAD: user asks about objects directly in front ("what's ahead", "anything in front")
+- DESCRIBE_SURROUNDINGS: user wants a general overview of the room ("where am I", "what's around", "tell me about this place")
+- SAFETY_CHECK: user wants to know if they can safely move ("is it safe", "can I walk", "clear path?")
+- NAVIGATE_TO_DESTINATION: user wants to go to a specific place ("take me to", "go to", "navigate to")
+- STOP: user wants to halt all activities ("stop", "cancel", "shut up", "quit")
+- HELP: user wants usage instructions ("help", "what can I say")
 
-Destinations (if applicable):
+VALID DESTINATIONS:
 - cafeteria, washroom
    
-Be flexible with language. If user says "what do you see" → DESCRIBE_SURROUNDINGS. If "is path clear" → SAFETY_CHECK.
+INSTRUCTIONS:
+1. Be extremely flexible. 
+2. If they want to go somewhere not in the list, return NAVIGATE_TO_DESTINATION but set destination to null.
+3. Return ONLY valid JSON.
 
-Return JSON only:
+JSON FORMAT:
 {{
   "intent": "<INTENT>",
   "destination": "<destination or null>"
@@ -100,9 +108,9 @@ Return JSON only:
         result = json.loads(result_text)
         
         # Validate intent - if unrecognized, default to DESCRIBE_SURROUNDINGS (safest general option)
-        valid_intents = ["WHAT_IS_AHEAD", "DESCRIBE_SURROUNDINGS", "NAVIGATE_TO_DESTINATION", "SAFETY_CHECK"]
+        valid_intents = ["WHAT_IS_AHEAD", "DESCRIBE_SURROUNDINGS", "NAVIGATE_TO_DESTINATION", "SAFETY_CHECK", "STOP", "HELP"]
         if result.get("intent") not in valid_intents:
-            result["intent"] = "DESCRIBE_SURROUNDINGS"  # Default to description instead of UNKNOWN
+            result["intent"] = "DESCRIBE_SURROUNDINGS"
         
         # Validate destination
         valid_destinations = ["cafeteria", "washroom"]

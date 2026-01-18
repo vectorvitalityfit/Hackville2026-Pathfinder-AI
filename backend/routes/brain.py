@@ -42,9 +42,8 @@ def get_gemini_model():
     
     credentials = service_account.Credentials.from_service_account_file(CREDENTIALS_PATH)
     
-    # List of models to try in order of preference (Higher capability -> Higher availability)
     models_to_try = [
-        "gemini-2.0-flash-exp", # User requested 2.x only
+        "gemini-2.5-flash", 
     ]
     
     last_exception = None
@@ -81,7 +80,11 @@ async def describe_surroundings(input_data: BrainInput):
         input_data.user_context += " [CRITICAL: Path blocked ahead]"
     
     try:
+        print(f"DEBUG: Initializing Gemini model for /brain/describe")
         model = get_gemini_model()
+        if not model:
+            print("ERROR: get_gemini_model returned None")
+            raise Exception("Model initialization failed")
         
         # Build scene information
         if input_data.scene_description:
@@ -92,7 +95,7 @@ async def describe_surroundings(input_data: BrainInput):
             scene_info = "No visual data available."
         
         # Get prompt from centralized manager with safety controls
-        prompt = get_navigation_prompt(
+        prompt = "You are the GUIDANCE AGENT.\n" + get_navigation_prompt(
             intent=input_data.intent,
             scene_info=scene_info,
             objects=input_data.objects,
@@ -101,10 +104,22 @@ async def describe_surroundings(input_data: BrainInput):
         )
         
         print(f"DEBUG: Using prompt node: {input_data.intent}")
+        print(f"DEBUG: FULL PROMPT SENT TO GEMINI:\n{prompt}\n---END PROMPT---")
         
         # Generate response
         response = model.generate_content(prompt)
-        text_output = response.text.strip()
+        
+        if not response:
+            print("ERROR: Gemini returned empty response object")
+            raise Exception("Empty response from Gemini")
+            
+        try:
+            text_output = response.text.strip()
+            print(f"DEBUG: Raw Gemini output: {text_output}")
+        except Exception as re:
+            print(f"ERROR: Could not get response.text: {re}")
+            print(f"DEBUG: Response object detail: {response}")
+            raise Exception(f"Gemini response parsing failed: {re}")
         
         # Apply safety filter to ensure response matches reality
         text_output = PromptManager.apply_safety_filter(text_output, input_data.objects)
@@ -112,7 +127,7 @@ async def describe_surroundings(input_data: BrainInput):
         # Clean up formatting
         text_output = text_output.replace("*", "").replace("#", "").strip()
         
-        print(f"DEBUG: Generated text: {text_output}")
+        print(f"DEBUG: Final speech text: {text_output}")
         return BrainResponse(speech_text=text_output)
         
     except Exception as e:
