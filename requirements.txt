@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+python-multipart
+pydantic
+google-cloud-vision
+google-cloud-aiplatform
+httpx
