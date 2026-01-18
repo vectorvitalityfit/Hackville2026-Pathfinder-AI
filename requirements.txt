@@ -4,4 +4,5 @@ python-multipart
 pydantic
 google-cloud-vision
 google-cloud-aiplatform
+google-cloud-speech
 httpx

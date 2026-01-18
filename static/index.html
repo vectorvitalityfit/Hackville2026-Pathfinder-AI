@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Voice Navigation Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #video-container {
+            position: relative;
+            flex: 1;
+            background: #000;
+            overflow: hidden;
+        }
+
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+        }
+
+        #status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 16px;
+            backdrop-filter: blur(10px);
+        }
+
+        #response {
+            position: absolute;
+            bottom: 100px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 20px;
+            border-radius: 15px;
+            font-size: 20px;
+            font-weight: 600;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            display: none;
+        }
+
+        #controls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(20, 20, 20, 0.95);
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        button {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 25px;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            min-width: 120px;
+        }
+
+        button:active {
+            transform: scale(0.95);
+            background: #0051D5;
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        #voice-btn {
+            background: #FF3B30;
+            font-size: 24px;
+            padding: 20px 40px;
+            box-shadow: 0 4px 20px rgba(255, 59, 48, 0.4);
+        }
+
+        #voice-btn.recording {
+            background: #FF9500;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-connected {
+            background: #34C759;
+            box-shadow: 0 0 10px #34C759;
+        }
+
+        .status-disconnected {
+            background: #FF3B30;
+        }
+
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        #loading h1 {
+            font-size: 32px;
+            margin-bottom: 20px;
+        }
+
+        #loading p {
+            font-size: 18px;
+            color: #666;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #333;
+            border-top-color: #007AFF;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <h1>🧭 Voice Navigator</h1>
+        <div class="spinner"></div>
+        <p>Initializing camera...</p>
+    </div>
+
+    <div id="container" style="display: none;">
+        <div id="video-container">
+            <video id="video" autoplay playsinline></video>
+            <div id="overlay">
+                <div id="status">
+                    <span class="status-indicator status-disconnected" id="status-indicator"></span>
+                    <span id="status-text">Connecting...</span>
+                </div>
+                <div id="response"></div>
+            </div>
+        </div>
+
+        <div id="controls">
+            <button id="voice-btn" disabled>🎤 Speak</button>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = window.location.origin;
+        let mediaRecorder;
+        let audioChunks = [];
+        let isProcessing = false;
+        let stream = null;
+
+        // Elements
+        const loading = document.getElementById('loading');
+        const container = document.getElementById('container');
+        const video = document.getElementById('video');
+        const voiceBtn = document.getElementById('voice-btn');
+        const statusText = document.getElementById('status-text');
+        const statusIndicator = document.getElementById('status-indicator');
+        const responseDiv = document.getElementById('response');
+
+        // Initialize camera
+        async function initCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: 640, height: 480 },
+                    audio: false
+                });
+                video.srcObject = stream;
+                
+                loading.style.display = 'none';
+                container.style.display = 'flex';
+                
+                updateStatus('Ready', true);
+                voiceBtn.disabled = false;
+                
+                // Say hello
+                speak("Hello. I'm here to guide you.");
+            } catch (err) {
+                console.error('Camera error:', err);
+                loading.querySelector('p').textContent = 'Camera access denied. Please allow camera permission.';
+            }
+        }
+
+        // Update status
+        function updateStatus(text, connected = false) {
+            statusText.textContent = text;
+            if (connected) {
+                statusIndicator.className = 'status-indicator status-connected';
+            } else {
+                statusIndicator.className = 'status-indicator status-disconnected';
+            }
+        }
+
+        // Show response
+        function showResponse(text) {
+            responseDiv.textContent = text;
+            responseDiv.style.display = 'block';
+            setTimeout(() => {
+                responseDiv.style.display = 'none';
+            }, 5000);
+        }
+
+        // Voice recording
+        voiceBtn.addEventListener('click', async () => {
+            if (isProcessing) return;
+
+            if (!mediaRecorder || mediaRecorder.state === 'inactive') {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        });
+
+        async function startRecording() {
+            try {
+                const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(audioStream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = (e) => {
+                    audioChunks.push(e.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    await processVoiceCommand(audioBlob);
+                    audioStream.getTracks().forEach(track => track.stop());
+                };
+
+                mediaRecorder.start();
+                voiceBtn.classList.add('recording');
+                voiceBtn.textContent = '⏹️ Stop';
+                updateStatus('Listening...', true);
+
+                // Auto-stop after 3 seconds
+                setTimeout(() => {
+                    if (mediaRecorder.state === 'recording') {
+                        stopRecording();
+                    }
+                }, 3000);
+            } catch (err) {
+                console.error('Microphone error:', err);
+                updateStatus('Microphone access denied', false);
+            }
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                voiceBtn.classList.remove('recording');
+                voiceBtn.textContent = '🎤 Speak';
+                updateStatus('Processing...', true);
+            }
+        }
+
+        async function processVoiceCommand(audioBlob) {
+            isProcessing = true;
+            voiceBtn.disabled = true;
+
+            try {
+                // Capture frame
+                const canvas = document.createElement('canvas');
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0);
+                const imageBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg'));
+
+                // Send voice command
+                const formData = new FormData();
+                formData.append('file', audioBlob, 'audio.webm');
+
+                const cmdResponse = await fetch(`${API_URL}/command/interpret-voice`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const cmdData = await cmdResponse.json();
+                const intent = cmdData.intent;
+                const destination = cmdData.destination;
+
+                showResponse(`You said: ${cmdData.transcription || 'Processing...'}`);
+
+                // Process based on intent
+                if (intent === 'NAVIGATE_TO_DESTINATION' && destination) {
+                    const navResp = await fetch(`${API_URL}/navigation/start`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ destination })
+                    });
+                    speak(`Going to ${destination}. Follow me.`);
+                } else {
+                    // Get scene description
+                    await analyzeScene(imageBlob, intent);
+                }
+
+            } catch (err) {
+                console.error('Processing error:', err);
+                updateStatus('Error processing command', false);
+                speak('Sorry, something went wrong.');
+            } finally {
+                isProcessing = false;
+                voiceBtn.disabled = false;
+                updateStatus('Ready', true);
+            }
+        }
+
+        async function analyzeScene(imageBlob, intent = 'describe_once') {
+            try {
+                // Vision analysis
+                const visionForm = new FormData();
+                visionForm.append('file', imageBlob, 'frame.jpg');
+
+                const visionResp = await fetch(`${API_URL}/vision/analyze-frame`, {
+                    method: 'POST',
+                    body: visionForm
+                });
+
+                const visionData = await visionResp.json();
+
+                // Brain processing
+                const brainResp = await fetch(`${API_URL}/brain/describe`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        scene_description: visionData.scene_description || '',
+                        objects: visionData.objects || [],
+                        destination: 'current location',
+                        user_context: 'Describe surroundings.',
+                        intent: intent
+                    })
+                });
+
+                const brainData = await brainResp.json();
+                const text = brainData.speech_text;
+
+                showResponse(text);
+                await speak(text);
+
+            } catch (err) {
+                console.error('Analysis error:', err);
+            }
+        }
+
+        async function speak(text) {
+            try {
+                const response = await fetch(`${API_URL}/speech/speak`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+
+                const data = await response.json();
+                const audio = new Audio('data:audio/mpeg;base64,' + data.audio_base64);
+                await audio.play();
+            } catch (err) {
+                console.error('Speech error:', err);
+            }
+        }
+
+        // Start on load
+        window.addEventListener('load', initCamera);
+
+        // Keep screen awake
+        if ('wakeLock' in navigator) {
+            navigator.wakeLock.request('screen').catch(() => {});
+        }
+    </script>
+</body>
+</html>

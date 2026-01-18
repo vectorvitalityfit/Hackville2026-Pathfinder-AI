@@ -6,6 +6,7 @@ from google.oauth2 import service_account
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any
+from prompt_manager import PromptManager, IntentNode, get_navigation_prompt
 
 router = APIRouter()
 
@@ -30,6 +31,7 @@ class BrainInput(BaseModel):
     objects: List[Dict[str, Any]] = Field(default_factory=list, description="List of detected objects with name, confidence, position")
     destination: str = Field(..., description="Target destination")
     user_context: str = Field(..., description="Context about the user and environment")
+    intent: str = Field(default="navigate", description="Navigation intent: navigate, describe_surroundings, safety_check, what_is_ahead")
 
 class BrainResponse(BaseModel):
     speech_text: str
@@ -63,40 +65,52 @@ def get_gemini_model():
 @router.post("/describe", response_model=BrainResponse)
 async def describe_surroundings(input_data: BrainInput):
     """
-    Generates navigation instructions using Google Gemini (Vertex AI).
+    Generates navigation instructions using Google Gemini (Vertex AI) with safety controls.
+    Uses centralized prompt manager for consistent personality and safety.
     """
-    print("DEBUG: /brain/describe called")
+    print(f"DEBUG: /brain/describe called with intent: {input_data.intent}")
+    
+    # Safety check: Center obstacles trigger emergency mode
+    center_obstacles = [o for o in input_data.objects if o.get('position') == 'center']
+    has_center_obstacle = len(center_obstacles) > 0
+    
+    # If center obstacle and not already in emergency mode, force emergency stop
+    if has_center_obstacle and input_data.intent != "emergency_stop":
+        print(f"DEBUG: SAFETY OVERRIDE - Center obstacle detected: {center_obstacles}")
+        input_data.intent = "emergency_stop"
+    
     try:
         model = get_gemini_model()
         
-        # Build prompt based on available data
+        # Build scene information
         if input_data.scene_description:
-            scene_info = f"**Scene Analysis**: {input_data.scene_description}"
+            scene_info = f"{input_data.scene_description}"
         elif input_data.objects:
-            scene_info = f"**Detected Objects** (relative to user): \n{json.dumps(input_data.objects, indent=2)}"
+            scene_info = f"Detected objects: {json.dumps(input_data.objects, indent=2)}"
         else:
-            scene_info = "**Scene Analysis**: No visual data available."
+            scene_info = "No visual data available."
         
-        prompt = f"""
-        You are a voice navigation assistant for a visually impaired user.
+        # Get prompt from centralized manager with safety controls
+        prompt = get_navigation_prompt(
+            intent=input_data.intent,
+            scene_info=scene_info,
+            objects=input_data.objects,
+            user_context=input_data.user_context,
+            destination=input_data.destination
+        )
         
-        **Context**: {input_data.user_context}
-        **Destination**: {input_data.destination}
-        {scene_info}
+        print(f"DEBUG: Using prompt node: {input_data.intent}")
         
-        **Instructions**:
-        1. Analyze the scene and provide clear, safe navigation guidance.
-        2. Provide step-by-step walking instructions to reach the destination or avoid obstacles.
-        3. Keep it brief (2-3 sentences max), calm, and reassuring.
-        4. Use relative directions (left, right, ahead) and approximate distances in steps.
-        5. Warn immediately about hazards in the path.
-        
-        **Response Format**:
-        Return ONLY the spoken text content, no markdown formatting.
-        """
-        
+        # Generate response
         response = model.generate_content(prompt)
-        text_output = response.text.replace("*", "").strip() # Clean up markdown if any
+        text_output = response.text.strip()
+        
+        # Apply safety filter to ensure response matches reality
+        text_output = PromptManager.apply_safety_filter(text_output, input_data.objects)
+        
+        # Clean up formatting
+        text_output = text_output.replace("*", "").replace("#", "").strip()
+        
         print(f"DEBUG: Generated text: {text_output}")
         return BrainResponse(speech_text=text_output)
         
@@ -104,7 +118,13 @@ async def describe_surroundings(input_data: BrainInput):
         import traceback
         traceback.print_exc()
         print(f"Gemini API Error: {str(e)}")
-        # FALLBACK: If API fails (e.g. not enabled yet or model not found), 
-        # return credible dummy text so the hackathon demo doesn't crash.
-        fallback_text = f"fallback"
+        
+        # SAFETY FALLBACK: Return safe response based on intent
+        try:
+            intent_enum = IntentNode(input_data.intent.lower())
+        except:
+            intent_enum = IntentNode.NAVIGATE
+        
+        fallback_text = PromptManager.get_fallback_response(intent_enum, has_center_obstacle)
+        print(f"DEBUG: Using fallback response: {fallback_text}")
         return BrainResponse(speech_text=fallback_text)
