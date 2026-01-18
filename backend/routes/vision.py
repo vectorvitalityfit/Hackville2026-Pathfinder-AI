@@ -68,38 +68,7 @@ async def analyze_frame(file: UploadFile = File(...)):
     # Read image bytes
     content = await file.read()
     
-    # Try Gemini first (better for scene understanding)
-    try:
-        model = get_gemini_model()
-        if model:
-            print("Attempting Gemini analysis...")
-            
-            # Determine mime type
-            mime_type = file.content_type or "image/jpeg"
-            image_part = Part.from_data(content, mime_type=mime_type)
-            
-            prompt = """You are a navigation assistant for a blind person. 
-Analyze this image and describe:
-1. What is directly in front (clear path, obstacles)
-2. Objects on the left side
-3. Objects on the right side  
-4. Any immediate hazards or important navigation info
-
-Keep it brief, clear, and actionable for safe navigation."""
-            
-            response = model.generate_content([image_part, prompt])
-            scene_description = response.text.strip()
-            
-            print(f"Gemini success: {scene_description[:100]}...")
-            return VisionResponse(
-                scene_description=scene_description,
-                objects=[],
-                method_used="gemini"
-            )
-    except Exception as e:
-        print(f"Gemini failed: {e}, falling back to Vision API")
-    
-    # Fallback: Use Vision API for structured object detection
+    # Step 1: Use Vision API for accurate object detection
     try:
         client = get_vision_client()
         image = vision.Image(content=content)
@@ -112,7 +81,11 @@ Keep it brief, clear, and actionable for safe navigation."""
         
         for obj in objects:
             vertices = obj.bounding_poly.normalized_vertices
+            
+            # Calculate position
             x_coords = [v.x for v in vertices]
+            y_coords = [v.y for v in vertices]
+            
             if x_coords:
                 center_x = sum(x_coords) / len(x_coords)
                 if center_x < 0.33:
@@ -123,32 +96,82 @@ Keep it brief, clear, and actionable for safe navigation."""
                     pos_str = "right"
             else:
                 pos_str = "unknown"
+            
+            # Estimate distance based on size (larger = closer)
+            if y_coords:
+                height = max(y_coords) - min(y_coords)
+                # Rough heuristic: larger objects are closer
+                if height > 0.4:
+                    distance = 1.0  # Very close
+                elif height > 0.2:
+                    distance = 2.0  # Near
+                else:
+                    distance = 4.0  # Far
+            else:
+                distance = 3.0
+            
+            detected_objects.append({
+                "name": obj.name,
+                "confidence": round(obj.score, 2),
+                "position": pos_str,
+                "distance_meters": distance
+            })
+        
+        # Step 2: Use Gemini to generate natural guidance from detected objects
+        if detected_objects:
+            model = get_gemini_model()
+            if model:
+                guidance_prompt = f"""You are a guide for a blind person walking forward.
+                
+Vision API detected these objects:
+{json.dumps(detected_objects, indent=2)}
 
-            detected_objects.append(
-                ObjectDetection(
-                    name=obj.name,
-                    confidence=round(obj.score, 2),
-                    position=pos_str
-                )
-            )
-        
-        # If no objects found, try label detection
-        if not detected_objects:
-            label_response = client.label_detection(image=image)
-            for label in label_response.label_annotations[:3]:
-                detected_objects.append(
-                    ObjectDetection(
-                        name=label.description,
-                        confidence=round(label.score, 2),
-                        position="general"
+Generate natural, helpful guidance. Think like a guide dog:
+- Only mention objects that would block their path if walking straight
+- Ignore distant objects (> 3 meters)
+- Be concise and actionable
+- If path is clear, say "path clear"
+
+Return JSON:
+{{
+  "scene_description": "brief natural guidance",
+  "objects": [list of only relevant nearby obstacles with name, position, distance_meters]
+}}"""
+                
+                try:
+                    guidance_response = model.generate_content(guidance_prompt)
+                    guidance_text = guidance_response.text.strip()
+                    
+                    if guidance_text.startswith("```"):
+                        lines = guidance_text.split('\n')
+                        guidance_text = '\n'.join(lines[1:-1]) if len(lines) > 2 else guidance_text
+                    
+                    guidance_data = json.loads(guidance_text)
+                    print(f"Gemini guidance: {json.dumps(guidance_data, indent=2)}")
+                    
+                    return VisionResponse(
+                        scene_description=guidance_data.get("scene_description", ""),
+                        objects=guidance_data.get("objects", detected_objects[:3]),  # Fallback to top 3
+                        method_used="vision_api_with_gemini_guidance"
                     )
-                )
+                except Exception as e:
+                    print(f"Gemini guidance failed: {e}, using raw detection")
+                    # Fallback: return detected objects
+                    return VisionResponse(
+                        scene_description="Objects detected",
+                        objects=detected_objects[:5],
+                        method_used="vision_api"
+                    )
         
+        # No objects detected
         return VisionResponse(
-            scene_description=None,
-            objects=detected_objects,
+            scene_description="Path appears clear",
+            objects=[],
             method_used="vision_api"
         )
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Both Gemini and Vision API failed: {str(e)}")
+        print(f"Vision API failed: {e}")
+        # Final fallback
+        raise HTTPException(status_code=500, detail=f"All vision methods failed: {str(e)}")
+

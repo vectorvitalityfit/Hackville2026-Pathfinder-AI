@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from routes import vision, brain, speech, command, navigation
@@ -26,25 +26,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve static files
-static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
-if os.path.exists(static_dir):
-    app.mount("/static", StaticFiles(directory=static_dir), name="static")
-    
-    # Serve index.html at root
-    from fastapi.responses import FileResponse
-    
-    @app.get("/")
-    def read_root():
-        index_path = os.path.join(static_dir, "index.html")
-        if os.path.exists(index_path):
-            return FileResponse(index_path)
-        return {"message": "Voice Navigation Backend is running with safety controls"}
-else:
-    @app.get("/")
-    def read_root():
-        return {"message": "Voice Navigation Backend is running with safety controls"}
-
 # Global safety middleware
 @app.middleware("http")
 async def safety_middleware(request: Request, call_next):
@@ -69,16 +50,12 @@ async def safety_middleware(request: Request, call_next):
             }
         )
 
-# Include routers
+# Include routers FIRST
 app.include_router(vision.router, prefix="/vision", tags=["Vision"])
 app.include_router(brain.router, prefix="/brain", tags=["Brain"])
 app.include_router(speech.router, prefix="/speech", tags=["Speech"])
 app.include_router(command.router, prefix="/command", tags=["Command"])
 app.include_router(navigation.router, prefix="/navigation", tags=["Navigation"])
-
-@app.get("/")
-def read_root():
-    return {"message": "Voice Navigation Backend is running with safety controls"}
 
 @app.get("/health")
 def health_check():
@@ -88,3 +65,32 @@ def health_check():
         "safety_systems": "active",
         "services": ["vision", "brain", "speech", "command", "navigation"]
     }
+
+# Serve static files (Vite build) - MUST come after API routes
+# Serve static files (Vite build) - MUST come after API routes
+static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "../frontend")
+dist_dir = os.path.join(static_dir, "dist")
+
+# Check if production build exists
+if os.path.exists(dist_dir):
+    # Serve production build
+    app.mount("/assets", StaticFiles(directory=os.path.join(dist_dir, "assets")), name="assets")
+    
+    @app.get("/{full_path:path}")
+    def serve_spa(full_path: str):
+        """Serve the SPA for all non-API routes"""
+        file_path = os.path.join(dist_dir, full_path)
+        if os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+        
+        # Fallback to index.html for SPA routing
+        index_path = os.path.join(dist_dir, "index.html")
+        return FileResponse(index_path)
+else:
+    @app.get("/")
+    def read_root():
+        return {
+            "message": "Voice Navigation Backend is running",
+            "note": "Run 'npm run build' in the static folder to build frontend",
+            "backend_health": "/health"
+        }

@@ -33,10 +33,11 @@ Replace `YOUR_AUTH_TOKEN` with the token from ngrok dashboard
 
 ## 🎯 Running with ngrok
 
-### Terminal 1: Start Backend
+### Terminal 1: Start Server (Backend + Frontend)
 ```powershell
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.\start_server.ps1
 ```
+(Run this from the `backend` directory)
 
 ### Terminal 2: Start ngrok
 ```powershell
