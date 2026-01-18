@@ -53,6 +53,7 @@ class ObjectDetection(BaseModel):
     name: str = Field(..., description="Name of the detected object")
     confidence: float = Field(..., description="Confidence score")
     position: str = Field(..., description="Relative position")
+    distance_meters: float = Field(2.0, description="Estimated distance in meters")
     
 
 class VisionResponse(BaseModel):
@@ -65,10 +66,9 @@ async def analyze_frame(file: UploadFile = File(...)):
     """
     Analyze a single camera frame using Gemini (primary) with Vision API fallback.
     """
-    # Read image bytes
     content = await file.read()
     
-    # Step 1: Use Vision API for accurate object detection
+    # Use Vision API for fast, accurate object detection
     try:
         client = get_vision_client()
         image = vision.Image(content=content)
@@ -100,7 +100,6 @@ async def analyze_frame(file: UploadFile = File(...)):
             # Estimate distance based on size (larger = closer)
             if y_coords:
                 height = max(y_coords) - min(y_coords)
-                # Rough heuristic: larger objects are closer
                 if height > 0.4:
                     distance = 1.0  # Very close
                 elif height > 0.2:
@@ -110,68 +109,22 @@ async def analyze_frame(file: UploadFile = File(...)):
             else:
                 distance = 3.0
             
-            detected_objects.append({
-                "name": obj.name,
-                "confidence": round(obj.score, 2),
-                "position": pos_str,
-                "distance_meters": distance
-            })
+            detected_objects.append(
+                ObjectDetection(
+                    name=obj.name,
+                    confidence=round(obj.score, 2),
+                    position=pos_str,
+                    distance_meters=distance
+                )
+            )
         
-        # Step 2: Use Gemini to generate natural guidance from detected objects
-        if detected_objects:
-            model = get_gemini_model()
-            if model:
-                guidance_prompt = f"""You are a guide for a blind person walking forward.
-                
-Vision API detected these objects:
-{json.dumps(detected_objects, indent=2)}
-
-Generate natural, helpful guidance. Think like a guide dog:
-- Only mention objects that would block their path if walking straight
-- Ignore distant objects (> 3 meters)
-- Be concise and actionable
-- If path is clear, say "path clear"
-
-Return JSON:
-{{
-  "scene_description": "brief natural guidance",
-  "objects": [list of only relevant nearby obstacles with name, position, distance_meters]
-}}"""
-                
-                try:
-                    guidance_response = model.generate_content(guidance_prompt)
-                    guidance_text = guidance_response.text.strip()
-                    
-                    if guidance_text.startswith("```"):
-                        lines = guidance_text.split('\n')
-                        guidance_text = '\n'.join(lines[1:-1]) if len(lines) > 2 else guidance_text
-                    
-                    guidance_data = json.loads(guidance_text)
-                    print(f"Gemini guidance: {json.dumps(guidance_data, indent=2)}")
-                    
-                    return VisionResponse(
-                        scene_description=guidance_data.get("scene_description", ""),
-                        objects=guidance_data.get("objects", detected_objects[:3]),  # Fallback to top 3
-                        method_used="vision_api_with_gemini_guidance"
-                    )
-                except Exception as e:
-                    print(f"Gemini guidance failed: {e}, using raw detection")
-                    # Fallback: return detected objects
-                    return VisionResponse(
-                        scene_description="Objects detected",
-                        objects=detected_objects[:5],
-                        method_used="vision_api"
-                    )
-        
-        # No objects detected
         return VisionResponse(
-            scene_description="Path appears clear",
-            objects=[],
+            scene_description=None,
+            objects=detected_objects,
             method_used="vision_api"
         )
         
     except Exception as e:
-        print(f"Vision API failed: {e}")
-        # Final fallback
-        raise HTTPException(status_code=500, detail=f"All vision methods failed: {str(e)}")
+        print(f"Vision API error: {e}")
+        raise HTTPException(status_code=500, detail=f"Vision analysis failed: {str(e)}")
 

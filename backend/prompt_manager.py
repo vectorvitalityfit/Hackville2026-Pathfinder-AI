@@ -74,7 +74,8 @@ CORE TRAITS:
 - Keep responses under 20 words
 - Never use meta-commentary (don't say "I can help you with" or "let me assist")
 - Just state what you see and give clear directions
-- Prioritize safety - warn about obstacles immediately
+- Prioritize safety - warn about obstacles immediately if they are within 3 meters
+- IGNORE any objects that are further than 3 meters away
 - Use simple, direct language
 
 TONE:
@@ -125,7 +126,17 @@ USER NEEDS: {user_context}
             context += f"\nGuide them one step toward {destination}. Give ONE clear direction based on what you ACTUALLY SEE."
             
         elif intent == IntentNode.DESCRIBE_SURROUNDINGS:
-            context += "\nDescribe what's ACTUALLY in the scene. Only mention objects you can see. Be specific about positions (left, right, ahead, behind)."
+            context += """
+Tell them what's ahead and HOW TO NAVIGATE around it.
+
+RULES:
+- Identify only objects that are NEAR (< 3 meters) and could be hit.
+- IGNORE distant objects entirely.
+- If there's an obstacle in the center and it's close: suggest moving to the clearer side.
+- Only say "Stop" if the path is completely blocked on all sides within 2 meters.
+- Prioritize actionable directions: "Move left", "Go right", "Continue straight".
+- Keep it under 10 words.
+"""
             
         elif intent == IntentNode.SAFETY_CHECK:
             context += "\nBased on what you SEE, is the path clear? Answer directly: safe or not safe, and state specific obstacles if any."
@@ -141,18 +152,21 @@ USER NEEDS: {user_context}
     @staticmethod
     def _analyze_safety(objects: List[Dict]) -> str:
         """Analyze detected objects for safety status"""
-        if not objects:
-            return "No obstacles detected"
+        center_obstacles = [o for o in objects if o.get('position') == 'center' and o.get('distance_meters', 2.0) < 3.0]
+        left_obstacles = [o for o in objects if o.get('position') == 'left' and o.get('distance_meters', 2.0) < 2.5]
+        right_obstacles = [o for o in objects if o.get('position') == 'right' and o.get('distance_meters', 2.0) < 2.5]
         
-        center_obstacles = [o for o in objects if o.get('position') == 'center']
-        left_obstacles = [o for o in objects if o.get('position') == 'left']
-        right_obstacles = [o for o in objects if o.get('position') == 'right']
+        relevant_objects = center_obstacles + left_obstacles + right_obstacles
         
+        if not relevant_objects:
+            return "Path appears clear within 3 meters"
+            
         if center_obstacles:
             names = [o['name'] for o in center_obstacles[:2]]
-            return f"⚠️ DANGER: {', '.join(names)} blocking path ahead"
-        elif len(objects) > 3:
-            return f"⚠️ CAUTION: Multiple objects detected ({len(objects)} total)"
+            dist = min([o.get('distance_meters', 2.0) for o in center_obstacles])
+            return f"⚠️ DANGER: {', '.join(names)} blocking path at {dist}m"
+        elif len(relevant_objects) > 3:
+            return f"⚠️ CAUTION: Multiple nearby objects ({len(relevant_objects)} total)"
         elif left_obstacles and right_obstacles:
             return "⚠️ NARROW: Objects on both sides"
         else:
@@ -166,10 +180,12 @@ USER NEEDS: {user_context}
         """
         center_obstacles = [o for o in objects if o.get('position') == 'center']
         
-        # Force stop if center obstacle and response doesn't contain stop
-        if center_obstacles and 'stop' not in response_text.lower():
-            obstacle_names = ', '.join([o['name'] for o in center_obstacles[:2]])
-            return f"Stop! {obstacle_names} directly ahead."
+        # If center obstacle and response doesn't suggest a direction OR stop, force a stop.
+        if center_obstacles:
+            lower_text = response_text.lower()
+            if 'stop' not in lower_text and 'left' not in lower_text and 'right' not in lower_text:
+                obstacle_names = ', '.join([o['name'] for o in center_obstacles[:2]])
+                return f"Stop! {obstacle_names} ahead."
         
         # Remove any invented measurements
         dangerous_words = ['meters', 'feet', 'yards', 'inches', 'centimeters']

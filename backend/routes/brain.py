@@ -70,14 +70,15 @@ async def describe_surroundings(input_data: BrainInput):
     """
     print(f"DEBUG: /brain/describe called with intent: {input_data.intent}")
     
-    # Safety check: Center obstacles trigger emergency mode
     center_obstacles = [o for o in input_data.objects if o.get('position') == 'center']
     has_center_obstacle = len(center_obstacles) > 0
     
-    # If center obstacle and not already in emergency mode, force emergency stop
-    if has_center_obstacle and input_data.intent != "emergency_stop":
-        print(f"DEBUG: SAFETY OVERRIDE - Center obstacle detected: {center_obstacles}")
-        input_data.intent = "emergency_stop"
+    # If center obstacle, we used to force emergency_stop. 
+    # Now we let the model decide if it can suggest a route instead of just stopping.
+    if has_center_obstacle:
+        print(f"DEBUG: Center obstacle detected: {center_obstacles}")
+        # We'll stick with the requested intent but mark the situation as critical
+        input_data.user_context += " [CRITICAL: Path blocked ahead]"
     
     try:
         model = get_gemini_model()
