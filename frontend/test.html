@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Test - Voice Navigator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #1a1a1a;
+            color: #fff;
+        }
+        button {
+            background: #007AFF;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            margin: 10px;
+        }
+        button:hover {
+            background: #0051D5;
+        }
+        #output {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            min-height: 200px;
+        }
+        video {
+            width: 100%;
+            max-width: 640px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background: #333;
+        }
+        .success { background: #28a745; }
+        .error { background: #dc3545; }
+    </style>
+</head>
+<body>
+    <h1>🧭 Voice Navigator API Test</h1>
+    
+    <div>
+        <button onclick="testHealth()">Test Health Endpoint</button>
+        <button onclick="testVision()">Test Vision Analysis</button>
+        <button onclick="testSpeech()">Test Text-to-Speech</button>
+        <button onclick="startCamera()">Start Camera</button>
+    </div>
+
+    <video id="video" autoplay playsinline muted></video>
+
+    <div id="output"></div>
+
+    <script>
+        const API_URL = window.location.origin;
+        let videoStream = null;
+
+        function log(message, type = 'info') {
+            const output = document.getElementById('output');
+            const div = document.createElement('div');
+            div.className = `status ${type}`;
+            div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            output.insertBefore(div, output.firstChild);
+        }
+
+        async function testHealth() {
+            try {
+                log('Testing health endpoint...');
+                const response = await fetch(`${API_URL}/health`);
+                const data = await response.json();
+                log(`✅ Health check passed: ${JSON.stringify(data)}`, 'success');
+            } catch (error) {
+                log(`❌ Health check failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function startCamera() {
+            try {
+                log('Starting camera...');
+                const video = document.getElementById('video');
+                videoStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: 640, height: 480 }
+                });
+                video.srcObject = videoStream;
+                log('✅ Camera started', 'success');
+            } catch (error) {
+                log(`❌ Camera failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function captureFrame() {
+            const video = document.getElementById('video');
+            if (!video.srcObject) {
+                log('❌ Camera not started', 'error');
+                return null;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+
+            return new Promise(resolve => {
+                canvas.toBlob(blob => resolve(blob), 'image/jpeg', 0.8);
+            });
+        }
+
+        async function testVision() {
+            try {
+                log('Capturing frame...');
+                const imageBlob = await captureFrame();
+                if (!imageBlob) return;
+
+                log('Sending to vision API...');
+                const formData = new FormData();
+                formData.append('file', imageBlob, 'frame.jpg');
+
+                const response = await fetch(`${API_URL}/vision/analyze-frame`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                log(`✅ Vision analysis: ${JSON.stringify(data, null, 2)}`, 'success');
+            } catch (error) {
+                log(`❌ Vision test failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function testSpeech() {
+            try {
+                log('Testing text-to-speech...');
+                const response = await fetch(`${API_URL}/speech/speak`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: 'Hello, this is a test.' })
+                });
+
+                const data = await response.json();
+                if (data.audio_base64) {
+                    log('✅ Got audio data, playing...', 'success');
+                    const audio = new Audio('data:audio/mpeg;base64,' + data.audio_base64);
+                    await audio.play();
+                    log('✅ Audio played successfully', 'success');
+                } else {
+                    log('❌ No audio data received', 'error');
+                }
+            } catch (error) {
+                log(`❌ Speech test failed: ${error.message}`, 'error');
+            }
+        }
+
+        // Auto test health on load
+        window.addEventListener('load', () => {
+            setTimeout(testHealth, 500);
+        });
+    </script>
+</body>
+</html>
